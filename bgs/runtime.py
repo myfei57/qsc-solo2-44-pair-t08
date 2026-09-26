@@ -176,12 +176,16 @@ class LineControlRuntime:
         self.ids.restore("snap", len(self.store.snapshots.load_all()))
 
     def _adopt_versions(self) -> None:
+        defaults = self.config.defaults
         for record in self.store.visible():
+            subject = GENERATION_SUBJECTS.get(record.kind)
+            if subject is not None:
+                self.versions.observe(subject, record.generation)
             if record.kind == "feed.batch":
                 self.batches.adopt(
                     Batch(
                         batch_id=str(record.payload.get("batch_id")),
-                        generation=1,
+                        generation=record.generation,
                         tick=record.tick,
                         quantity=float(record.payload.get("quantity", 0.0)),
                         unit=str(record.payload.get("unit", "t")),
@@ -193,18 +197,18 @@ class LineControlRuntime:
                     str(payload["name"]),
                     float(payload["value"]),
                     str(payload.get("unit", "")),
-                    1,
-                    validity=Validity.never(record.tick),
+                    record.generation,
+                    validity=_validity_from(payload, record.tick, defaults.baseline_ttl_ticks),
                 )
             elif record.kind == CONFIRMATION_KIND:
                 payload = record.payload
-                self.versions.confirmations.record(
+                self.versions.adopt_confirmation(
                     Confirmation(
                         confirmation_id=str(payload["confirmation_id"]),
                         subject=str(payload["subject"]),
-                        generation=1,
-                        issuer="desul",
-                        validity=Validity.never(record.tick),
+                        generation=int(payload.get("generation", record.generation)),
+                        issuer=str(payload.get("issuer", record.origin)),
+                        validity=_validity_from(payload, record.tick, defaults.confirmation_ttl_ticks),
                     )
                 )
 
@@ -308,7 +312,7 @@ class LineControlRuntime:
     ) -> dict[str, Any]:
         """Publish a calibration value under a fresh generation."""
 
-        ttl = self.config.defaults.baseline_ttl_ticks
+        ttl = self.config.defaults.baseline_ttl_ticks if ttl_ticks is None else ttl_ticks
         baseline = self.versions.publish_baseline(name, value, unit, tick=self.clock.now(), ttl_ticks=ttl)
         record = self.store.publish(
             BASELINE_KIND,
@@ -319,6 +323,7 @@ class LineControlRuntime:
                 "name": baseline.name,
                 "value": baseline.value,
                 "unit": baseline.unit,
+                "validity": baseline.validity.to_document(),
             },
         )
         self.bus.publish(
@@ -454,6 +459,20 @@ def _split(value: Any) -> tuple[str, ...]:
     if not text:
         return ()
     return tuple(part for part in (item.strip() for item in text.split(",")) if part)
+
+
+def _validity_from(payload: Mapping[str, Any], tick: int, fallback_ttl: int) -> Validity:
+    """Restore an artifact's validity from its record.
+
+    Records written since the validity was persisted carry it verbatim.
+    Older records do not, so they fall back to the configured window:
+    a restart must never turn a time limited artifact into a permanent one.
+    """
+
+    document = payload.get("validity")
+    if isinstance(document, Mapping):
+        return Validity.from_document(document)
+    return Validity.of(tick, fallback_ttl)
 
 
 def _maybe_int(value: Any) -> int | None:

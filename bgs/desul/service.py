@@ -47,6 +47,9 @@ class DesulService(LineService):
             {
                 "confirmation_id": confirmation.confirmation_id,
                 "subject": confirmation.subject,
+                "generation": confirmation.generation,
+                "issuer": confirmation.issuer,
+                "validity": confirmation.validity.to_document(),
                 "active": True,
             },
         )

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from bgs.errors import ArtifactExpiredError, DuplicateError
+from bgs.errors import ArtifactExpiredError, DuplicateError, StaleGenerationError
 from bgs.runtime import LineControlRuntime
 
 
@@ -51,6 +51,47 @@ def test_restart_keeps_an_expired_confirmation_expired(runtime, boot):
     assert reopened.clock.now() == 20
     with pytest.raises(ArtifactExpiredError):
         reopened.dispatch("compress.start", {})
+
+
+def test_restart_keeps_an_expired_baseline_expired(runtime, prime, boot):
+    prime()
+    runtime.dispatch(
+        "baseline.publish",
+        {"name": "membrane_pressure", "value": 1500, "unit": "kPa", "ttl_ticks": 2},
+    )
+    runtime.advance_ticks(6)
+
+    reopened = boot()
+
+    with pytest.raises(ArtifactExpiredError) as caught:
+        reopened.dispatch("mem.ramp", {"pressure_kpa": 1500, "baseline_generation": 1})
+
+    assert caught.value.context["valid_until"] == 2
+
+
+def test_restart_recognises_only_the_latest_calibration(runtime, prime, boot):
+    prime()
+    runtime.dispatch("baseline.publish", {"name": "membrane_pressure", "value": 1500, "unit": "kPa"})
+    runtime.dispatch("baseline.publish", {"name": "membrane_pressure", "value": 1520, "unit": "kPa"})
+
+    reopened = boot()
+
+    assert reopened.versions.current_generation("membrane_pressure") == 2
+    assert reopened.versions.baseline_value("membrane_pressure") == 1520.0
+    with pytest.raises(StaleGenerationError):
+        reopened.dispatch("mem.ramp", {"pressure_kpa": 1520, "baseline_generation": 1})
+    reopened.dispatch("mem.ramp", {"pressure_kpa": 1520, "baseline_generation": 2})
+
+
+def test_restart_keeps_a_replaced_confirmation_generation_expired(runtime, boot):
+    runtime.dispatch("desul.check", {"sulfur_ppm": 6.0})
+    runtime.advance_ticks(20)
+    runtime.dispatch("desul.check", {"sulfur_ppm": 5.0})
+
+    reopened = boot()
+
+    assert reopened.versions.current_generation("desul") == 2
+    reopened.dispatch("compress.start", {})
 
 
 def test_restart_keeps_batch_uniqueness(runtime, boot):
