@@ -46,12 +46,13 @@ class LineService:
         facts.update(extra)
         return facts
 
-    def publish(self, kind: str, payload: Mapping[str, Any]) -> Record:
+    def publish(self, kind: str, payload: Mapping[str, Any], *, generation: int | None = None) -> Record:
         """Append one committed record on behalf of this service."""
 
         body = dict(payload)
         body.setdefault("origin", self.origin)
-        return self.store.publish(kind, self.origin, self.generation(), body)
+        record_generation = self.generation() if generation is None else generation
+        return self.store.publish(kind, self.origin, record_generation, body)
 
     def emit(self, name: str, payload: Mapping[str, Any] | None = None) -> int:
         """Raise a domain event on the bus."""

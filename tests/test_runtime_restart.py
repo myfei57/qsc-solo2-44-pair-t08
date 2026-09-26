@@ -53,6 +53,53 @@ def test_restart_keeps_an_expired_confirmation_expired(runtime, boot):
         reopened.dispatch("compress.start", {})
 
 
+def test_restart_keeps_the_newest_outlet_generation(runtime, boot):
+    runtime.dispatch("desul.check", {"sulfur_ppm": 6.0})
+    runtime.dispatch("desul.check", {"sulfur_ppm": 7.0})
+
+    reopened = boot()
+
+    assert reopened.versions.current_generation("desul") == 2
+    latest = reopened.versions.confirmations.latest("desul")
+    assert latest is not None
+    assert latest.generation == 2
+    started = reopened.dispatch("compress.start", {})
+    assert started["result"]["running"] is True
+
+
+def test_restart_uses_the_newest_baseline_and_keeps_its_validity(runtime, prime, boot):
+    prime()
+    runtime.dispatch(
+        "baseline.publish",
+        {"name": "membrane_pressure", "value": 1500, "unit": "kPa", "ttl_ticks": 8},
+    )
+    runtime.dispatch(
+        "baseline.publish",
+        {"name": "membrane_pressure", "value": 1510, "unit": "kPa", "ttl_ticks": 8},
+    )
+    runtime.advance_ticks(20)
+
+    reopened = boot()
+
+    assert reopened.versions.current_generation("membrane_pressure") == 2
+    assert reopened.versions.baseline_value("membrane_pressure") == 1510.0
+    with pytest.raises(ArtifactExpiredError):
+        reopened.dispatch("mem.ramp", {"pressure_kpa": 1510, "baseline_generation": 2})
+
+
+def test_restart_keeps_batch_generation(runtime, boot):
+    runtime.dispatch("stir.start", {})
+    runtime.dispatch("stir.homogenize", {"level": 0.9})
+    runtime.dispatch("stir.persist", {})
+    runtime.dispatch("feed.batch", {"batch_id": "B-5", "quantity": 5.0})
+
+    reopened = boot()
+
+    batch = reopened.batches.get("B-5")
+    assert batch.generation == 1
+    assert reopened.versions.current_generation("feed") == 1
+
+
 def test_restart_keeps_batch_uniqueness(runtime, boot):
     runtime.dispatch("stir.start", {})
     runtime.dispatch("stir.homogenize", {"level": 0.9})

@@ -122,9 +122,15 @@ class VersionedArtifacts:
                 value=value,
                 unit=unit,
                 generation=generation,
-                validity=Validity.never(validity.issued_tick),
+                validity=validity,
             )
         )
+
+    def adopt_confirmation(self, confirmation: Confirmation) -> None:
+        """Adopt a confirmation read back from the stream during replay."""
+
+        self._generations.observe(confirmation.subject, confirmation.generation)
+        self._confirmations.record(confirmation)
 
     def require_baseline(self, name: str, *, generation: int, now: int) -> Baseline:
         return self._baselines.require(name, generation=generation, now=now)

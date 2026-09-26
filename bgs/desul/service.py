@@ -35,7 +35,11 @@ class DesulService(LineService):
                 limit=reading.limit,
             )
         token = self.context.versions.bump(self.subject, tick=now)
-        self.publish(VERIFIED_KIND, {"active": True, "sulfur_ppm": sulfur_ppm, "generation": token.value})
+        self.publish(
+            VERIFIED_KIND,
+            {"active": True, "sulfur_ppm": sulfur_ppm, "generation": token.value},
+            generation=token.value,
+        )
         confirmation = self.context.versions.confirm(
             self.subject,
             tick=now,
@@ -48,7 +52,11 @@ class DesulService(LineService):
                 "confirmation_id": confirmation.confirmation_id,
                 "subject": confirmation.subject,
                 "active": True,
+                "generation": confirmation.generation,
+                "issuer": confirmation.issuer,
+                "ttl_ticks": confirmation.validity.ttl_ticks,
             },
+            generation=confirmation.generation,
         )
         if self.machine.is_at(UpgradePhase.IDLE.value):
             self.advance(UpgradePhase.DESUL_VERIFIED.value, "outlet verified")

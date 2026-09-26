@@ -65,6 +65,7 @@ class StirService(LineService):
         record = self.publish(
             PERSISTED_KIND,
             build_payload(float(mixed["level"]), token.value, self.context.clock.now()),
+            generation=token.value,
         )
         outcome = PersistOutcome(
             generation=token.value,

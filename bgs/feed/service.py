@@ -47,6 +47,7 @@ class FeedService(LineService):
                 "unit": batch.unit,
                 "generation": batch.generation,
             },
+            generation=batch.generation,
         )
         if self.machine.is_at(FeedPhase.IDLE.value):
             self.advance(FeedPhase.STIR_CONFIRMED.value, "batch declared against a durable mix")

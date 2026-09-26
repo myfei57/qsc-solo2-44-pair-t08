@@ -6,6 +6,8 @@ import pytest
 
 from bgs.errors import ArtifactExpiredError, ValidationError
 from bgs.ids import SequenceIds
+from bgs.versioning.confirmation import Confirmation
+from bgs.versioning.expiry import Validity
 from bgs.versioning.facade import VersionedArtifacts
 
 
@@ -50,6 +52,23 @@ def test_adopted_baseline_keeps_its_original_validity():
 
     with pytest.raises(ArtifactExpiredError):
         versions.require_baseline("mix_ratio", generation=3, now=99)
+
+
+def test_adopted_confirmation_keeps_its_generation_and_validity():
+    versions = VersionedArtifacts.fresh(SequenceIds())
+    versions.adopt_confirmation(
+        Confirmation(
+            confirmation_id="conf-000001",
+            subject="desul",
+            generation=3,
+            issuer="desul",
+            validity=Validity.of(1, 4),
+        )
+    )
+
+    assert versions.current_generation("desul") == 3
+    with pytest.raises(ArtifactExpiredError):
+        versions.require_confirmation("desul", generation=3, now=9)
 
 
 def test_describe_lists_every_versioned_artifact():

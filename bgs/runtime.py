@@ -29,6 +29,7 @@ from .mem.service import MemService
 from .statemachine.gate import PreGate
 from .statemachine.machine import SequenceMachine
 from .stir.service import StirService
+from .store.records import Record
 from .store.repository import RecordRepository, RestoreReport
 from .vent.service import VentService
 from .versioning.confirmation import Confirmation
@@ -89,6 +90,14 @@ def _optional_integer(payload: Mapping[str, Any], key: str, fallback: int) -> in
         return int(value)
     except (TypeError, ValueError) as exc:
         raise ValidationError("command field must be an integer", field=key, value=str(value)) from exc
+
+
+def _replayed_generation(payload: Mapping[str, Any], record: Record, default: int = 1) -> int:
+    """Return the generation persisted with an artifact."""
+
+    if "generation" in payload:
+        return int(payload["generation"])
+    return int(record.generation or default)
 
 
 class LineControlRuntime:
@@ -176,35 +185,47 @@ class LineControlRuntime:
         self.ids.restore("snap", len(self.store.snapshots.load_all()))
 
     def _adopt_versions(self) -> None:
+        defaults = self.config.defaults
         for record in self.store.visible():
+            payload = record.payload
             if record.kind == "feed.batch":
+                generation = _replayed_generation(payload, record)
+                self.versions.observe("feed", generation)
                 self.batches.adopt(
                     Batch(
-                        batch_id=str(record.payload.get("batch_id")),
-                        generation=1,
+                        batch_id=str(payload.get("batch_id")),
+                        generation=generation,
                         tick=record.tick,
-                        quantity=float(record.payload.get("quantity", 0.0)),
-                        unit=str(record.payload.get("unit", "t")),
+                        quantity=float(payload.get("quantity", 0.0)),
+                        unit=str(payload.get("unit", "t")),
                     )
                 )
+            elif record.kind == "stir.persisted":
+                generation = _replayed_generation(payload, record)
+                self.versions.observe("stir", generation)
+            elif record.kind == "desul.verified":
+                generation = _replayed_generation(payload, record)
+                self.versions.observe("desul", generation)
             elif record.kind == BASELINE_KIND:
-                payload = record.payload
+                generation = _replayed_generation(payload, record)
+                ttl_ticks = int(payload.get("ttl_ticks", defaults.baseline_ttl_ticks))
                 self.versions.adopt_baseline(
                     str(payload["name"]),
                     float(payload["value"]),
                     str(payload.get("unit", "")),
-                    1,
-                    validity=Validity.never(record.tick),
+                    generation,
+                    validity=Validity.of(record.tick, ttl_ticks),
                 )
             elif record.kind == CONFIRMATION_KIND:
-                payload = record.payload
-                self.versions.confirmations.record(
+                generation = _replayed_generation(payload, record)
+                ttl_ticks = int(payload.get("ttl_ticks", defaults.confirmation_ttl_ticks))
+                self.versions.adopt_confirmation(
                     Confirmation(
                         confirmation_id=str(payload["confirmation_id"]),
                         subject=str(payload["subject"]),
-                        generation=1,
-                        issuer="desul",
-                        validity=Validity.never(record.tick),
+                        generation=generation,
+                        issuer=str(payload.get("issuer", record.origin)),
+                        validity=Validity.of(record.tick, ttl_ticks),
                     )
                 )
 
@@ -308,7 +329,7 @@ class LineControlRuntime:
     ) -> dict[str, Any]:
         """Publish a calibration value under a fresh generation."""
 
-        ttl = self.config.defaults.baseline_ttl_ticks
+        ttl = self.config.defaults.baseline_ttl_ticks if ttl_ticks is None else ttl_ticks
         baseline = self.versions.publish_baseline(name, value, unit, tick=self.clock.now(), ttl_ticks=ttl)
         record = self.store.publish(
             BASELINE_KIND,
@@ -319,6 +340,8 @@ class LineControlRuntime:
                 "name": baseline.name,
                 "value": baseline.value,
                 "unit": baseline.unit,
+                "generation": baseline.generation,
+                "ttl_ticks": baseline.validity.ttl_ticks,
             },
         )
         self.bus.publish(
